@@ -1,13 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>Minders Live</title>
+
+    <!--
+      Amplitude Unified Script (CDN).
+      Carga: Analytics + Session Replay + Web Experiment (visual editor drag & drop).
+      Ref: https://amplitude.com/docs/sdks/analytics/browser/browser-unified-sdk
+    -->
+    <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.js"></script>
+
+    <!--
+      Guides & Surveys (engagement) plugin. DEBE ir DESPUÉS del script principal.
+      Ref: https://amplitude.com/docs/guides-and-surveys/sdk
+    -->
+    <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.engagement.js"></script>
+
+    <script>
+      // 1) Plugins ANTES de init()
+      window.amplitude.add(window.sessionReplay.plugin({ sampleRate: 1 })); // 100% para QA, baja a 0.1 en prod
+      window.amplitude.add(window.engagement.plugin()); // Guides & Surveys
+
+      // 2) Init de Analytics (Web Experiment se enciende solo desde el Unified Script)
+      window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', {
+        autocapture: true,        // page views, sessions, clicks, form interactions, file downloads, attribution
+        fetchRemoteConfig: true,  // necesario para que Web Experiment evalúe variantes en cliente
+        defaultTracking: true
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
