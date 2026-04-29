@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { User, LogIn, Building2, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
-import { trackEvent, identifyUser } from '../lib/amplitude';
+import { trackEvent, flushEvents } from '../lib/amplitude';
 import { useToast } from '../components/Toast';
 
 export function Auth({ type }: { type: 'login' | 'register' }) {
@@ -54,9 +54,9 @@ export function Auth({ type }: { type: 'login' | 'register' }) {
     // Simulate API call
     await new Promise(r => setTimeout(r, 1500));
     
-    login(role as 'registered' | 'organizer', { name, email });
-    identifyUser({ role: role as string, signed_up: true });
-    trackEvent('User Registered', { role: role as string });
+    login(role as 'registered' | 'organizer', { name, email, signed_up: true });
+    trackEvent('User Registered', { role: role as string, email_domain: email.split('@')[1]?.toLowerCase() });
+    flushEvents();
     
     setIsLoading(false);
     handleAuthRedirect(role as string);
@@ -71,18 +71,19 @@ export function Auth({ type }: { type: 'login' | 'register' }) {
     await new Promise(r => setTimeout(r, 1500));
     
     const loginRole = email.includes('organizer') ? 'organizer' : 'registered';
-    login(loginRole, { name: loginRole === 'organizer' ? 'Organizador Demo' : 'Usuario Demo', email });
-    identifyUser({ role: loginRole, signed_up: false });
-    trackEvent('User Logged In', { role: loginRole });
+    login(loginRole, { name: loginRole === 'organizer' ? 'Organizador Demo' : 'Usuario Demo', email, signed_up: false });
+    trackEvent('User Logged In', { role: loginRole, email_domain: email.split('@')[1]?.toLowerCase() });
+    flushEvents();
     
     setIsLoading(false);
     handleAuthRedirect(loginRole);
   };
 
   const handleDemoFastLogin = (demoRole: 'registered' | 'organizer') => {
-    login(demoRole, { name: demoRole === 'organizer' ? 'Organizador Demo' : 'Usuario Demo', email: `demo@${demoRole}.minders.io` });
-    identifyUser({ role: demoRole, signed_up: false });
-    trackEvent('User Logged In', { role: demoRole });
+    const demoEmail = `demo+${Date.now()}@${demoRole}.minders.io`;
+    login(demoRole, { name: demoRole === 'organizer' ? 'Organizador Demo' : 'Usuario Demo', email: demoEmail, signed_up: false });
+    trackEvent('User Logged In', { role: demoRole, email_domain: demoEmail.split('@')[1]?.toLowerCase(), login_type: 'demo_fast_login' });
+    flushEvents();
     handleAuthRedirect(demoRole);
   };
 
