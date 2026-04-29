@@ -23,12 +23,30 @@
       window.amplitude.add(window.sessionReplay.plugin({ sampleRate: 1 })); // 100% para QA, baja a 0.1 en prod
       window.amplitude.add(window.engagement.plugin()); // Guides & Surveys
 
-      // 2) Init de Analytics (Web Experiment se enciende solo desde el Unified Script)
-      window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', {
+      // 2) Si ya hay un usuario guardado en la app, inicializa Amplitude con su User ID.
+      // Esto evita que el primer Page View de una sesión recargada quede como anónimo.
+      let savedAmplitudeUserId;
+      try {
+        const savedUser = JSON.parse(localStorage.getItem('minders_user') || 'null');
+        if (savedUser && savedUser.role !== 'anonymous' && savedUser.id) {
+          savedAmplitudeUserId = savedUser.id;
+        }
+      } catch (error) {
+        savedAmplitudeUserId = undefined;
+      }
+
+      const amplitudeConfig = {
         autocapture: true,        // page views, sessions, clicks, form interactions, file downloads, attribution
         fetchRemoteConfig: true,  // necesario para que Web Experiment evalúe variantes en cliente
         defaultTracking: true
-      });
+      };
+
+      // 3) Init de Analytics
+      if (savedAmplitudeUserId) {
+        window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', savedAmplitudeUserId, amplitudeConfig);
+      } else {
+        window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', amplitudeConfig);
+      }
     </script>
   </head>
   <body>
