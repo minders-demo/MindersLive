@@ -1,29 +1,60 @@
 /**
  * Amplitude wrapper — usa el Unified Script cargado desde index.html.
- * Expone las mismas firmas que el mock anterior, pero llama al SDK real.
+ * Expone funciones simples para Analytics, Identify, Session Replay,
+ * Guides/Surveys y Experiment sin acoplar la app al SDK directamente.
  */
 
-// --- Tipos para los globales que carga el CDN ----------------------------
 declare global {
   interface Window {
-    amplitude: any;   // @amplitude/analytics-browser
+    amplitude: any;   // @amplitude/analytics-browser / unified script
     sessionReplay: any;
     engagement: any;  // @amplitude/engagement-browser
-    experiment: any;  // @amplitude/experiment-js-client (Feature Experiment)
+    experiment: any;  // @amplitude/experiment-js-client
   }
 }
 
-// --- Constantes (compatibilidad con el código existente) -----------------
 export const AMPLITUDE_API_KEY = "149c1b2572d16bf0d4035a897f1abfca";
-export const EXPERIMENT_DEPLOYMENT_KEY = ""; // se rellena al crear un Deployment en Amplitude > Experiment
-export const GUIDES_SURVEYS_KEY = AMPLITUDE_API_KEY; // misma project key
+export const EXPERIMENT_DEPLOYMENT_KEY = "";
+export const GUIDES_SURVEYS_KEY = AMPLITUDE_API_KEY;
 
-// Helper: el script puede no haber terminado de cargar en el primer render
 function amp(): any | null {
   return typeof window !== "undefined" && window.amplitude ? window.amplitude : null;
 }
 
-// --- API pública ---------------------------------------------------------
+function normalizeEmail(email?: string | null): string | undefined {
+  const normalized = String(email || "").trim().toLowerCase();
+  return normalized.includes("@") ? normalized : undefined;
+}
+
+/**
+ * Crea un ID estable para Amplitude a partir del correo.
+ * No usamos el email directamente como User ID para evitar exponer PII como identificador.
+ */
+export function buildStableUserId(seed?: string | null): string | undefined {
+  const value = normalizeEmail(seed) || String(seed || "").trim().toLowerCase();
+  if (!value) return undefined;
+
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  }
+
+  const positiveHash = Math.abs(hash).toString(36);
+  return `ml_user_${positiveHash}`;
+}
+
+function fallbackUserId(): string {
+  const randomPart =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+      : Math.random().toString(36).slice(2, 14);
+
+  return `ml_user_${randomPart}`;
+}
+
+export function createAppUserId(email?: string | null): string {
+  return buildStableUserId(email) || fallbackUserId();
+}
 
 /** Envía un evento custom a Amplitude Analytics. */
 export function trackEvent(eventName: string, properties?: Record<string, any>) {
@@ -32,49 +63,71 @@ export function trackEvent(eventName: string, properties?: Record<string, any>) 
     console.warn("[Amplitude] SDK no disponible aún:", eventName);
     return;
   }
+
   a.track(eventName, properties || {});
 }
 
 /**
- * Setea user properties. Si pasas user_id o email, también se identifica al usuario.
- * Ref: https://amplitude.com/docs/sdks/analytics/browser/browser-sdk-2
+ * Identifica al usuario actual en Amplitude.
+ * - Si recibe user_id/userId/id, lo usa como Amplitude User ID.
+ * - Si no recibe ID pero sí email, crea un ID estable basado en hash del email.
+ * - Además guarda propiedades de usuario con identify().
  */
 export function identifyUser(userProperties: Record<string, any>) {
   const a = amp();
-  if (!a) return;
+  if (!a) {
+    console.warn("[Amplitude] SDK no disponible para identify", userProperties);
+    return;
+  }
 
-  // Si llega un id explícito úsalo como Amplitude userId
-  if (userProperties.user_id) a.setUserId(String(userProperties.user_id));
-  if (userProperties.email) a.setUserId(String(userProperties.email));
+  const explicitId = userProperties.user_id || userProperties.userId || userProperties.id;
+  const derivedId = explicitId ? String(explicitId) : buildStableUserId(userProperties.email);
+  const amplitudeUserId = derivedId && derivedId.length >= 5 ? derivedId : undefined;
+
+  if (amplitudeUserId) {
+    a.setUserId(amplitudeUserId);
+  }
 
   const identify = new a.Identify();
+
   Object.entries(userProperties).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) identify.set(key, value as any);
+    if (value === undefined || value === null || value === "") return;
+    if (["user_id", "userId", "id"].includes(key)) return;
+    identify.set(key, value as any);
   });
+
+  if (amplitudeUserId) {
+    identify.set("app_user_id", amplitudeUserId);
+  }
+
   a.identify(identify);
 }
 
 /**
- * Marca exposición a una variante. Útil cuando el variante se decide localmente
- * (DemoControls) y queremos que Amplitude lo registre como $exposure.
- * Ref: https://amplitude.com/docs/sdks/experiment-sdks/experiment-javascript
+ * Úsalo en logout o cuando quieras iniciar una simulación con otro usuario.
+ * Limpia el userId y genera un nuevo deviceId en Amplitude.
  */
-export function setExperimentVariant(flagKey: string, variant: string) {
+export function resetUser() {
   const a = amp();
   if (!a) return;
-  a.track("$exposure", { flag_key: flagKey, variant });
+  a.reset();
 }
 
-/**
- * Lee una variante real desde Amplitude Experiment (Feature Experiment).
- * Llama a `await fetchExperimentVariants()` una vez tras identificar al usuario
- * y luego usa esto para leer cada flag.
- */
+/** Fuerza el envío del buffer de eventos. Útil para pruebas/demo. */
+export function flushEvents() {
+  const a = amp();
+  if (!a) return;
+  a.flush?.();
+}
+
+export function setExperimentVariant(flagKey: string, variant: string) {
+  trackEvent("$exposure", { flag_key: flagKey, variant });
+}
+
 export function getExperimentVariant(flagKey: string): string | undefined {
   return window.experiment?.variant(flagKey)?.value;
 }
 
-/** Trae todas las variantes asignadas al usuario actual. Llamar tras identifyUser(). */
 export async function fetchExperimentVariants() {
   if (!window.experiment) return;
   try {
@@ -84,16 +137,10 @@ export async function fetchExperimentVariants() {
   }
 }
 
-/**
- * Dispara un Guide. En Amplitude el patrón recomendado es targetear el guide
- * por evento — así que aquí emitimos un evento que tu Guide escuchará en la UI.
- * Ref: https://amplitude.com/docs/guides-and-surveys/sdk
- */
 export function triggerGuide(guideName: string) {
   trackEvent("Guide Trigger Requested", { guide_name: guideName });
 }
 
-/** Idem para Surveys. */
 export function triggerSurvey(surveyName: string) {
   trackEvent("Survey Trigger Requested", { survey_name: surveyName });
 }
