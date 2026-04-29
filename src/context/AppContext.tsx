@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { identifyUser, trackEvent } from "../lib/amplitude";
+import { createAppUserId, identifyUser, resetUser, trackEvent } from "../lib/amplitude";
 
 export type UserRole = 'anonymous' | 'registered' | 'organizer';
 
@@ -47,7 +47,7 @@ interface AppState {
 }
 
 interface AppContextType extends AppState {
-  login: (role: UserRole, userDetails?: Partial<User>) => void;
+  login: (role: UserRole, userDetails?: Partial<User> & { signed_up?: boolean }) => void;
   logout: () => void;
   updatePreferences: (prefs: User['preferences']) => void;
   addToCart: (item: CartItem) => void;
@@ -127,12 +127,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('minders_experiments', JSON.stringify(experiments));
   }, [experiments]);
 
-  const login = (role: UserRole, userDetails?: Partial<User>) => {
-    const newUser = { ...defaultUser, role, ...userDetails, id: Math.random().toString(36).substr(2, 9) };
+  const login = (role: UserRole, userDetails?: Partial<User> & { signed_up?: boolean }) => {
+    const { signed_up, ...details } = userDetails || {};
+    const appUserId = details.id && details.id !== 'anon' ? details.id : createAppUserId(details.email);
+
+    const newUser: User = {
+      ...defaultUser,
+      ...details,
+      id: appUserId,
+      role
+    };
+
+    // Importante: identificar ANTES de enviar eventos como "User Logged In".
+    identifyUser({
+      user_id: newUser.id,
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
+      signed_up: Boolean(signed_up),
+      source: 'minders_live_demo'
+    });
+
     setUser(newUser);
   };
 
-  const logout = () => setUser(defaultUser);
+  const logout = () => {
+    if (user.role !== 'anonymous') {
+      trackEvent("User Logged Out", { role: user.role });
+    }
+    setUser(defaultUser);
+    resetUser();
+  };
 
   const updatePreferences = (prefs: User['preferences']) => {
     setUser(prev => {
