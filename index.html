@@ -5,30 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Minders Live</title>
 
-    <!--
-      Amplitude Unified Script (CDN).
-      Carga: Analytics + Session Replay + Web Experiment (visual editor drag & drop).
-      Ref: https://amplitude.com/docs/sdks/analytics/browser/browser-unified-sdk
-    -->
     <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.js"></script>
-
-    <!--
-      Guides & Surveys (engagement) plugin. DEBE ir DESPUÉS del script principal.
-      Ref: https://amplitude.com/docs/guides-and-surveys/sdk
-    -->
     <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.engagement.js"></script>
 
     <script>
-      // 1) Plugins ANTES de init()
-      window.amplitude.add(window.sessionReplay.plugin({ sampleRate: 1 })); // 100% para QA, baja a 0.1 en prod
-      window.amplitude.add(window.engagement.plugin()); // Guides & Surveys
+      window.amplitude.add(window.sessionReplay.plugin({ sampleRate: 1 }));
+      window.amplitude.add(window.engagement.plugin());
 
-      // 2) Si ya hay un usuario guardado en la app, inicializa Amplitude con su User ID.
-      // Esto evita que el primer Page View de una sesión recargada quede como anónimo.
       let savedAmplitudeUserId;
       try {
-        const savedUser = JSON.parse(localStorage.getItem('minders_user') || 'null');
-        if (savedUser && savedUser.role !== 'anonymous' && savedUser.id) {
+        const savedUser = JSON.parse(localStorage.getItem("minders_user") || "null");
+        if (savedUser && savedUser.role !== "anonymous" && savedUser.id) {
           savedAmplitudeUserId = savedUser.id;
         }
       } catch (error) {
@@ -36,19 +23,33 @@
       }
 
       const amplitudeConfig = {
-        autocapture: true,        // page views, sessions, clicks, form interactions, file downloads, attribution
-        fetchRemoteConfig: true,  // necesario para que Web Experiment evalúe variantes en cliente
-        defaultTracking: true
+        fetchRemoteConfig: true,
+        autocapture: {
+          attribution: {
+            trackingMethod: ["userProperty", "eventProperty"],
+            fallbackAttributionEvent: true,
+            excludeInternalReferrers: { condition: "ifEmptyCampaign" }
+          },
+          pageViews: true,
+          sessions: true,
+          formInteractions: true,
+          fileDownloads: true,
+          elementInteractions: true,
+          pageUrlEnrichment: true,
+          frustrationInteractions: true,
+          networkTracking: true,
+          webVitals: true
+        }
       };
 
-      // 3) Init de Analytics
       if (savedAmplitudeUserId) {
-        window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', savedAmplitudeUserId, amplitudeConfig);
+        window.amplitude.init("149c1b2572d16bf0d4035a897f1abfca", savedAmplitudeUserId, amplitudeConfig);
       } else {
-        window.amplitude.init('149c1b2572d16bf0d4035a897f1abfca', amplitudeConfig);
+        window.amplitude.init("149c1b2572d16bf0d4035a897f1abfca", amplitudeConfig);
       }
     </script>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
