@@ -92,10 +92,18 @@ export function EventDetail() {
     if (!location) return;
 
     trackEvent("Add To Cart", { 
-      event_id: event.event_id, 
-      quantity, 
-      cart_value: location.price * quantity 
-    });
+  event_id: event.event_id,
+  event_name: event.name,
+  category: event.category,
+  city: event.city,
+  venue: event.venue,
+  location_id: location.id,
+  ticket_tier: location.name,
+  price: location.price,
+  quantity,
+  cart_value: location.price * quantity,
+  is_resale: Boolean((location as any).isResale)
+});
 
     addToCart({
       event_id: event.event_id,
