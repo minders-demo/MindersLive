@@ -19,7 +19,14 @@ export function Cart() {
   const total = cartTotal + serviceFee;
 
   const handleCheckoutClick = () => {
-    trackEvent("Checkout Started", { cart_value: cartTotal, items_count: cart.length });
+    trackEvent("Checkout Started", {
+  cart_value: cartTotal,
+  service_fee: serviceFee,
+  total_value: total,
+  items_count: cart.length,
+  tickets_count: cart.reduce((acc, item) => acc + item.quantity, 0),
+  user_role: user.role
+});
     if (user.role === 'anonymous') {
       setShowLoginModal(true);
       return;
