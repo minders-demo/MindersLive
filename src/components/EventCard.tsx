@@ -13,13 +13,15 @@ export function EventCard({ event }: EventCardProps) {
   const minPrice = Math.min(...event.locations.map(l => l.price));
   
   const handleClick = () => {
-    trackEvent("Event Viewed", { 
-      event_id: event.event_id, 
-      event_name: event.name, 
-      category: event.category, 
-      city: event.city, 
-      venue: event.venue 
-    });
+trackEvent("Event Card Clicked", { 
+  event_id: event.event_id,
+  event_name: event.name,
+  category: event.category,
+  city: event.city,
+  venue: event.venue,
+  min_price: minPrice,
+  source_component: "event_card"
+});
   };
 
   return (
