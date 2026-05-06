@@ -43,13 +43,18 @@ export function EventDetail() {
 
   useEffect(() => {
     if (event) {
-      trackEvent("Event Viewed", { 
-        event_id: event.event_id, 
-        event_name: event.name, 
-        category: event.category, 
-        city: event.city, 
-        venue: event.venue 
-      });
+      trackEvent("Event Detail Viewed", { 
+  event_id: event.event_id,
+  event_name: event.name,
+  category: event.category,
+  city: event.city,
+  venue: event.venue,
+  status: event.status,
+  min_price: Math.min(...event.locations.map(l => l.price)),
+  locations_count: event.locations.length,
+  transferable: event.transferable,
+  resalable: event.resalable
+});
       if (event.locations.length > 2) {
         triggerGuide('Seat Map Selection');
       }
