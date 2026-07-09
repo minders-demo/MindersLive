@@ -37,6 +37,12 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+      # SPA fallback: GitHub Pages sirve 404.html en cualquier ruta que no
+      # exista como archivo (p. ej. /MindersLive/cart). Al copiar index.html
+      # como 404.html, la app React carga y React Router resuelve la ruta.
+      - name: Create SPA 404 fallback
+        run: cp dist/index.html dist/404.html
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
