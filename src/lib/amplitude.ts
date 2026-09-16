@@ -13,18 +13,37 @@ declare global {
     amplitudeReady?: Promise<unknown>;
     sessionReplay: any;
     engagement: any;
+    mindersExperiment?: {
+      refresh: () => Promise<HomeCardsExperimentVariant>;
+      status: () => ExperimentDiagnostics;
+    };
   }
 }
 
 export type HomeCardsExperimentVariant = 'control' | 'treatment';
 
+interface ExperimentDiagnostics {
+  configured: boolean;
+  initialized: boolean;
+  flagKey: string;
+  userId?: string;
+  deviceId?: string;
+  lastVariant: HomeCardsExperimentVariant;
+  lastFetchAt?: string;
+  lastError?: string;
+}
+
 export const AMPLITUDE_API_KEY =
   '149c1b2572d16bf0d4035a897f1abfca';
 
-export const EXPERIMENT_DEPLOYMENT_KEY =
-  String(
-    import.meta.env.VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY || '',
-  ).trim() || AMPLITUDE_API_KEY;
+/*
+ * Esta clave debe venir del deployment Client de Amplitude Experiment.
+ * No se usa la API Key de Analytics como fallback porque son credenciales
+ * con funciones diferentes y el fallback ocultaba errores de configuración.
+ */
+export const EXPERIMENT_DEPLOYMENT_KEY = String(
+  import.meta.env.VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY || '',
+).trim();
 
 export const HOME_CARDS_EXPERIMENT_FLAG_KEY =
   String(
@@ -35,6 +54,9 @@ export const GUIDES_SURVEYS_KEY = AMPLITUDE_API_KEY;
 
 let experimentClient: ExperimentClient | null = null;
 let experimentInitialization: Promise<void> | null = null;
+let lastVariant: HomeCardsExperimentVariant = 'control';
+let lastFetchAt: string | undefined;
+let lastError: string | undefined;
 
 let homeCardsVariantCache: {
   identityKey: string;
@@ -45,6 +67,10 @@ function amp(): any | null {
   return typeof window !== 'undefined' && window.amplitude
     ? window.amplitude
     : null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getExperimentIdentityKey(): string {
@@ -63,25 +89,27 @@ function getDeviceCategory(): ExperimentUser['device_category'] {
   return 'desktop';
 }
 
-const experimentUserProvider: ExperimentUserProvider = {
-  getUser(): ExperimentUser {
-    const analytics = amp();
+function getExperimentUser(): ExperimentUser {
+  const analytics = amp();
 
-    return {
-      user_id: analytics?.getUserId?.() || undefined,
-      device_id: analytics?.getDeviceId?.() || undefined,
-      device_category: getDeviceCategory(),
-      language:
-        typeof navigator !== 'undefined'
-          ? navigator.language
-          : undefined,
-      platform: 'Web',
-      user_agent:
-        typeof navigator !== 'undefined'
-          ? navigator.userAgent
-          : undefined,
-    };
-  },
+  return {
+    user_id: analytics?.getUserId?.() || undefined,
+    device_id: analytics?.getDeviceId?.() || undefined,
+    device_category: getDeviceCategory(),
+    language:
+      typeof navigator !== 'undefined'
+        ? navigator.language
+        : undefined,
+    platform: 'Web',
+    user_agent:
+      typeof navigator !== 'undefined'
+        ? navigator.userAgent
+        : undefined,
+  };
+}
+
+const experimentUserProvider: ExperimentUserProvider = {
+  getUser: getExperimentUser,
 };
 
 const exposureTrackingProvider: ExposureTrackingProvider = {
@@ -205,6 +233,7 @@ export function identifyUser(
   }
 
   analytics.identify(identify);
+  homeCardsVariantCache = null;
 }
 
 export function resetUser() {
@@ -213,13 +242,40 @@ export function resetUser() {
   analytics?.reset?.();
   experimentClient?.clear();
   homeCardsVariantCache = null;
+  lastVariant = 'control';
 }
 
 export function flushEvents() {
   amp()?.flush?.();
 }
 
+function getDiagnostics(): ExperimentDiagnostics {
+  const user = getExperimentUser();
+
+  return {
+    configured: Boolean(EXPERIMENT_DEPLOYMENT_KEY),
+    initialized: Boolean(experimentClient),
+    flagKey: HOME_CARDS_EXPERIMENT_FLAG_KEY,
+    userId: user.user_id,
+    deviceId: user.device_id,
+    lastVariant,
+    lastFetchAt,
+    lastError,
+  };
+}
+
+function installDiagnostics() {
+  if (typeof window === 'undefined') return;
+
+  window.mindersExperiment = {
+    refresh: fetchExperimentVariants,
+    status: getDiagnostics,
+  };
+}
+
 export async function initializeFeatureExperiment(): Promise<void> {
+  installDiagnostics();
+
   if (experimentInitialization) {
     return experimentInitialization;
   }
@@ -234,6 +290,13 @@ export async function initializeFeatureExperiment(): Promise<void> {
       );
     }
 
+    if (!EXPERIMENT_DEPLOYMENT_KEY) {
+      lastError =
+        'Falta VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY en el build.';
+      console.error(`[Amplitude Experiment] ${lastError}`);
+      return;
+    }
+
     try {
       experimentClient = Experiment.initialize(
         EXPERIMENT_DEPLOYMENT_KEY,
@@ -242,15 +305,17 @@ export async function initializeFeatureExperiment(): Promise<void> {
           userProvider: experimentUserProvider,
           exposureTrackingProvider,
           automaticExposureTracking: true,
-          fetchTimeoutMillis: 1500,
         },
       );
 
-      await experimentClient.fetch();
+      await experimentClient.fetch(getExperimentUser());
       homeCardsVariantCache = null;
+      lastFetchAt = new Date().toISOString();
+      lastError = undefined;
     } catch (error) {
-      console.warn(
-        '[Amplitude Experiment] No fue posible obtener variantes. Se usará control.',
+      lastError = errorMessage(error);
+      console.error(
+        '[Amplitude Experiment] No fue posible obtener variantes.',
         error,
       );
     }
@@ -259,17 +324,39 @@ export async function initializeFeatureExperiment(): Promise<void> {
   return experimentInitialization;
 }
 
-export async function fetchExperimentVariants(): Promise<void> {
+export async function fetchExperimentVariants(): Promise<HomeCardsExperimentVariant> {
   await initializeFeatureExperiment();
 
+  if (!experimentClient) {
+    lastVariant = 'control';
+    return lastVariant;
+  }
+
   try {
-    await experimentClient?.fetch();
+    await experimentClient.fetch(getExperimentUser());
     homeCardsVariantCache = null;
+    lastFetchAt = new Date().toISOString();
+    lastError = undefined;
+
+    const value = experimentClient.variant(
+      HOME_CARDS_EXPERIMENT_FLAG_KEY,
+      {value: 'control'},
+    ).value;
+
+    lastVariant =
+      value === 'treatment' ? 'treatment' : 'control';
+
+    return lastVariant;
   } catch (error) {
-    console.warn(
+    lastError = errorMessage(error);
+    lastVariant = 'control';
+
+    console.error(
       '[Amplitude Experiment] No fue posible actualizar variantes.',
       error,
     );
+
+    return lastVariant;
   }
 }
 
@@ -296,6 +383,8 @@ export function getHomeCardsExperimentVariant(): HomeCardsExperimentVariant {
     HOME_CARDS_EXPERIMENT_FLAG_KEY,
     'control',
   );
+
+  lastVariant = value;
 
   homeCardsVariantCache = {
     identityKey,
