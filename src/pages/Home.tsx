@@ -14,7 +14,6 @@ import {MOCK_EVENTS} from '../lib/mockData';
 import {EventCard} from '../components/EventCard';
 import {
   fetchExperimentVariants,
-  getHomeCardsExperimentVariant,
   trackEvent,
   type HomeCardsExperimentVariant,
 } from '../lib/amplitude';
@@ -27,12 +26,11 @@ export function Home() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [homeCardsVariant, setHomeCardsVariant] =
-    useState<HomeCardsExperimentVariant>(
-      () => getHomeCardsExperimentVariant(),
-    );
+    useState<HomeCardsExperimentVariant>('control');
 
-  const evaluatedUserIdRef = useRef(user.id);
   const homeViewTrackedRef = useRef(false);
+  const [experimentReady, setExperimentReady] =
+    useState(false);
 
   const cities = Array.from(
     new Set(MOCK_EVENTS.map((event) => event.city)),
@@ -43,17 +41,15 @@ export function Home() {
   );
 
   useEffect(() => {
-    if (evaluatedUserIdRef.current === user.id) return;
-
-    evaluatedUserIdRef.current = user.id;
-
     let cancelled = false;
 
-    fetchExperimentVariants().then(() => {
+    setExperimentReady(false);
+    homeViewTrackedRef.current = false;
+
+    fetchExperimentVariants().then((variant) => {
       if (!cancelled) {
-        setHomeCardsVariant(
-          getHomeCardsExperimentVariant(),
-        );
+        setHomeCardsVariant(variant);
+        setExperimentReady(true);
       }
     });
 
@@ -63,7 +59,9 @@ export function Home() {
   }, [user.id]);
 
   useEffect(() => {
-    if (homeViewTrackedRef.current) return;
+    if (!experimentReady || homeViewTrackedRef.current) {
+      return;
+    }
 
     homeViewTrackedRef.current = true;
 
@@ -72,7 +70,7 @@ export function Home() {
       page_url: window.location.href,
       experiment_variant: homeCardsVariant,
     });
-  }, [homeCardsVariant]);
+  }, [experimentReady, homeCardsVariant]);
 
   const handleCityChange = (
     event: React.ChangeEvent<HTMLSelectElement>,
