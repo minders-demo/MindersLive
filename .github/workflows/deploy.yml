@@ -16,30 +16,34 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
+
+      - name: Validate TypeScript
+        run: npm run lint
 
       - name: Build
         run: npm run build
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY: ${{ vars.VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY }}
+          VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY: ${{ vars.VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY }}
 
-      # SPA fallback: GitHub Pages sirve 404.html en cualquier ruta que no
-      # exista como archivo (p. ej. /MindersLive/cart). Al copiar index.html
-      # como 404.html, la app React carga y React Router resuelve la ruta.
       - name: Create SPA 404 fallback
         run: cp dist/index.html dist/404.html
 
