@@ -2,24 +2,40 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
     <title>Minders Live</title>
 
-    <!-- ① Web Experiment: debe ir lo más arriba posible para evitar flicker -->
-    <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.experiment.js"></script>
-
-    <!-- ② Analytics (Unified Script) + Engagement (Guides & Surveys) -->
+    <!-- Analytics + Session Replay + Guides & Surveys.
+         Feature Experiment se inicializa desde src/lib/amplitude.ts. -->
     <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.js"></script>
     <script src="https://cdn.amplitude.com/script/149c1b2572d16bf0d4035a897f1abfca.engagement.js"></script>
 
     <script>
-      window.amplitude.add(window.sessionReplay.plugin({ sampleRate: 1 }));
-      window.amplitude.add(window.engagement.plugin());
+      window.amplitude.add(
+        window.sessionReplay.plugin({
+          sampleRate: 1
+        })
+      );
+
+      window.amplitude.add(
+        window.engagement.plugin()
+      );
 
       let savedAmplitudeUserId;
+
       try {
-        const savedUser = JSON.parse(localStorage.getItem("minders_user") || "null");
-        if (savedUser && savedUser.role !== "anonymous" && savedUser.id) {
+        const savedUser = JSON.parse(
+          localStorage.getItem("minders_user") || "null"
+        );
+
+        if (
+          savedUser &&
+          savedUser.role !== "anonymous" &&
+          savedUser.id
+        ) {
           savedAmplitudeUserId = savedUser.id;
         }
       } catch (error) {
@@ -30,9 +46,14 @@
         fetchRemoteConfig: true,
         autocapture: {
           attribution: {
-            trackingMethod: ["userProperty", "eventProperty"],
+            trackingMethod: [
+              "userProperty",
+              "eventProperty"
+            ],
             fallbackAttributionEvent: true,
-            excludeInternalReferrers: { condition: "ifEmptyCampaign" }
+            excludeInternalReferrers: {
+              condition: "ifEmptyCampaign"
+            }
           },
           pageViews: true,
           sessions: true,
@@ -46,16 +67,31 @@
         }
       };
 
-      if (savedAmplitudeUserId) {
-        window.amplitude.init("149c1b2572d16bf0d4035a897f1abfca", savedAmplitudeUserId, amplitudeConfig);
-      } else {
-        window.amplitude.init("149c1b2572d16bf0d4035a897f1abfca", amplitudeConfig);
-      }
+      const amplitudeInitialization =
+        savedAmplitudeUserId
+          ? window.amplitude.init(
+              "149c1b2572d16bf0d4035a897f1abfca",
+              savedAmplitudeUserId,
+              amplitudeConfig
+            )
+          : window.amplitude.init(
+              "149c1b2572d16bf0d4035a897f1abfca",
+              amplitudeConfig
+            );
+
+      window.amplitudeReady =
+        amplitudeInitialization &&
+        amplitudeInitialization.promise
+          ? amplitudeInitialization.promise
+          : Promise.resolve();
     </script>
   </head>
 
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script
+      type="module"
+      src="/src/main.tsx"
+    ></script>
   </body>
 </html>
