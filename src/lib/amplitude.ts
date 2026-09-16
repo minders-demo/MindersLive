@@ -1,52 +1,133 @@
-/**
- * Amplitude wrapper — usa el Unified Script cargado desde index.html.
- * Expone funciones simples para Analytics, Identify, Session Replay,
- * Guides/Surveys y Experiment sin acoplar la app al SDK directamente.
- */
+import {
+  Experiment,
+  type ExperimentClient,
+  type ExperimentUser,
+  type ExperimentUserProvider,
+  type Exposure,
+  type ExposureTrackingProvider,
+} from '@amplitude/experiment-js-client';
 
 declare global {
   interface Window {
-    amplitude: any;   // @amplitude/analytics-browser / unified script
+    amplitude: any;
+    amplitudeReady?: Promise<unknown>;
     sessionReplay: any;
-    engagement: any;  // @amplitude/engagement-browser
-    experiment: any;  // @amplitude/experiment-js-client
+    engagement: any;
   }
 }
 
-export const AMPLITUDE_API_KEY = "149c1b2572d16bf0d4035a897f1abfca";
-export const EXPERIMENT_DEPLOYMENT_KEY = "";
+export type HomeCardsExperimentVariant = 'control' | 'treatment';
+
+export const AMPLITUDE_API_KEY =
+  '149c1b2572d16bf0d4035a897f1abfca';
+
+export const EXPERIMENT_DEPLOYMENT_KEY =
+  String(
+    import.meta.env.VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY || '',
+  ).trim() || AMPLITUDE_API_KEY;
+
+export const HOME_CARDS_EXPERIMENT_FLAG_KEY =
+  String(
+    import.meta.env.VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY || '',
+  ).trim() || 'exp-home-01-live-demand-cards';
+
 export const GUIDES_SURVEYS_KEY = AMPLITUDE_API_KEY;
 
+let experimentClient: ExperimentClient | null = null;
+let experimentInitialization: Promise<void> | null = null;
+
+let homeCardsVariantCache: {
+  identityKey: string;
+  value: HomeCardsExperimentVariant;
+} | null = null;
+
 function amp(): any | null {
-  return typeof window !== "undefined" && window.amplitude ? window.amplitude : null;
+  return typeof window !== 'undefined' && window.amplitude
+    ? window.amplitude
+    : null;
 }
 
-function normalizeEmail(email?: string | null): string | undefined {
-  const normalized = String(email || "").trim().toLowerCase();
-  return normalized.includes("@") ? normalized : undefined;
+function getExperimentIdentityKey(): string {
+  const analytics = amp();
+  const userId = analytics?.getUserId?.() || '';
+  const deviceId = analytics?.getDeviceId?.() || '';
+
+  return `${userId}::${deviceId}`;
 }
 
-/**
- * Crea un ID estable para Amplitude a partir del correo.
- * No usamos el email directamente como User ID para evitar exponer PII como identificador.
- */
-export function buildStableUserId(seed?: string | null): string | undefined {
-  const value = normalizeEmail(seed) || String(seed || "").trim().toLowerCase();
+function getDeviceCategory(): ExperimentUser['device_category'] {
+  if (typeof window === 'undefined') return 'desktop';
+  if (window.matchMedia('(max-width: 767px)').matches) return 'mobile';
+  if (window.matchMedia('(max-width: 1024px)').matches) return 'tablet';
+
+  return 'desktop';
+}
+
+const experimentUserProvider: ExperimentUserProvider = {
+  getUser(): ExperimentUser {
+    const analytics = amp();
+
+    return {
+      user_id: analytics?.getUserId?.() || undefined,
+      device_id: analytics?.getDeviceId?.() || undefined,
+      device_category: getDeviceCategory(),
+      language:
+        typeof navigator !== 'undefined'
+          ? navigator.language
+          : undefined,
+      platform: 'Web',
+      user_agent:
+        typeof navigator !== 'undefined'
+          ? navigator.userAgent
+          : undefined,
+    };
+  },
+};
+
+const exposureTrackingProvider: ExposureTrackingProvider = {
+  track(exposure: Exposure) {
+    trackEvent('$exposure', {
+      flag_key: exposure.flag_key,
+      variant: exposure.variant,
+      experiment_key: exposure.experiment_key,
+      metadata: exposure.metadata,
+    });
+  },
+};
+
+function normalizeEmail(
+  email?: string | null,
+): string | undefined {
+  const normalized = String(email || '').trim().toLowerCase();
+
+  return normalized.includes('@') ? normalized : undefined;
+}
+
+export function buildStableUserId(
+  seed?: string | null,
+): string | undefined {
+  const value =
+    normalizeEmail(seed) ||
+    String(seed || '').trim().toLowerCase();
+
   if (!value) return undefined;
 
   let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash =
+      ((hash << 5) - hash + value.charCodeAt(index)) | 0;
   }
 
   const positiveHash = Math.abs(hash).toString(36);
+
   return `ml_user_${positiveHash}`;
 }
 
 function fallbackUserId(): string {
   const randomPart =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
       : Math.random().toString(36).slice(2, 14);
 
   return `ml_user_${randomPart}`;
@@ -56,91 +137,192 @@ export function createAppUserId(email?: string | null): string {
   return buildStableUserId(email) || fallbackUserId();
 }
 
-/** Envía un evento custom a Amplitude Analytics. */
-export function trackEvent(eventName: string, properties?: Record<string, any>) {
-  const a = amp();
-  if (!a) {
-    console.warn("[Amplitude] SDK no disponible aún:", eventName);
+export function trackEvent(
+  eventName: string,
+  properties?: Record<string, any>,
+) {
+  const analytics = amp();
+
+  if (!analytics) {
+    console.warn('[Amplitude] SDK no disponible aún:', eventName);
     return;
   }
 
-  a.track(eventName, properties || {});
+  analytics.track(eventName, properties || {});
 }
 
-/**
- * Identifica al usuario actual en Amplitude.
- * - Si recibe user_id/userId/id, lo usa como Amplitude User ID.
- * - Si no recibe ID pero sí email, crea un ID estable basado en hash del email.
- * - Además guarda propiedades de usuario con identify().
- */
-export function identifyUser(userProperties: Record<string, any>) {
-  const a = amp();
-  if (!a) {
-    console.warn("[Amplitude] SDK no disponible para identify", userProperties);
+export function identifyUser(
+  userProperties: Record<string, any>,
+) {
+  const analytics = amp();
+
+  if (!analytics) {
+    console.warn(
+      '[Amplitude] SDK no disponible para identify',
+      userProperties,
+    );
     return;
   }
 
-  const explicitId = userProperties.user_id || userProperties.userId || userProperties.id;
-  const derivedId = explicitId ? String(explicitId) : buildStableUserId(userProperties.email);
-  const amplitudeUserId = derivedId && derivedId.length >= 5 ? derivedId : undefined;
+  const explicitId =
+    userProperties.user_id ||
+    userProperties.userId ||
+    userProperties.id;
+
+  const derivedId = explicitId
+    ? String(explicitId)
+    : buildStableUserId(userProperties.email);
+
+  const amplitudeUserId =
+    derivedId && derivedId.length >= 5
+      ? derivedId
+      : undefined;
 
   if (amplitudeUserId) {
-    a.setUserId(amplitudeUserId);
+    analytics.setUserId(amplitudeUserId);
   }
 
-  const identify = new a.Identify();
+  const identify = new analytics.Identify();
 
   Object.entries(userProperties).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return;
-    if (["user_id", "userId", "id"].includes(key)) return;
+    if (
+      value === undefined ||
+      value === null ||
+      value === ''
+    ) {
+      return;
+    }
+
+    if (['user_id', 'userId', 'id'].includes(key)) {
+      return;
+    }
+
     identify.set(key, value as any);
   });
 
   if (amplitudeUserId) {
-    identify.set("app_user_id", amplitudeUserId);
+    identify.set('app_user_id', amplitudeUserId);
   }
 
-  a.identify(identify);
+  analytics.identify(identify);
 }
 
-/**
- * Úsalo en logout o cuando quieras iniciar una simulación con otro usuario.
- * Limpia el userId y genera un nuevo deviceId en Amplitude.
- */
 export function resetUser() {
-  const a = amp();
-  if (!a) return;
-  a.reset();
+  const analytics = amp();
+
+  analytics?.reset?.();
+  experimentClient?.clear();
+  homeCardsVariantCache = null;
 }
 
-/** Fuerza el envío del buffer de eventos. Útil para pruebas/demo. */
 export function flushEvents() {
-  const a = amp();
-  if (!a) return;
-  a.flush?.();
+  amp()?.flush?.();
 }
 
-export function setExperimentVariant(flagKey: string, variant: string) {
-  trackEvent("$exposure", { flag_key: flagKey, variant });
-}
-
-export function getExperimentVariant(flagKey: string): string | undefined {
-  return window.experiment?.variant(flagKey)?.value;
-}
-
-export async function fetchExperimentVariants() {
-  if (!window.experiment) return;
-  try {
-    await window.experiment.fetch();
-  } catch (e) {
-    console.warn("[Amplitude Experiment] fetch falló:", e);
+export async function initializeFeatureExperiment(): Promise<void> {
+  if (experimentInitialization) {
+    return experimentInitialization;
   }
+
+  experimentInitialization = (async () => {
+    try {
+      await window.amplitudeReady;
+    } catch (error) {
+      console.warn(
+        '[Amplitude Analytics] La inicialización no terminó correctamente.',
+        error,
+      );
+    }
+
+    try {
+      experimentClient = Experiment.initialize(
+        EXPERIMENT_DEPLOYMENT_KEY,
+        {
+          instanceName: 'minders-live-home-cards',
+          userProvider: experimentUserProvider,
+          exposureTrackingProvider,
+          automaticExposureTracking: true,
+          fetchTimeoutMillis: 1500,
+        },
+      );
+
+      await experimentClient.fetch();
+      homeCardsVariantCache = null;
+    } catch (error) {
+      console.warn(
+        '[Amplitude Experiment] No fue posible obtener variantes. Se usará control.',
+        error,
+      );
+    }
+  })();
+
+  return experimentInitialization;
+}
+
+export async function fetchExperimentVariants(): Promise<void> {
+  await initializeFeatureExperiment();
+
+  try {
+    await experimentClient?.fetch();
+    homeCardsVariantCache = null;
+  } catch (error) {
+    console.warn(
+      '[Amplitude Experiment] No fue posible actualizar variantes.',
+      error,
+    );
+  }
+}
+
+export function getExperimentVariant(
+  flagKey: string,
+  fallback: HomeCardsExperimentVariant = 'control',
+): HomeCardsExperimentVariant {
+  const value = experimentClient?.variant(
+    flagKey,
+    {value: fallback},
+  ).value;
+
+  return value === 'treatment' ? 'treatment' : 'control';
+}
+
+export function getHomeCardsExperimentVariant(): HomeCardsExperimentVariant {
+  const identityKey = getExperimentIdentityKey();
+
+  if (homeCardsVariantCache?.identityKey === identityKey) {
+    return homeCardsVariantCache.value;
+  }
+
+  const value = getExperimentVariant(
+    HOME_CARDS_EXPERIMENT_FLAG_KEY,
+    'control',
+  );
+
+  homeCardsVariantCache = {
+    identityKey,
+    value,
+  };
+
+  return value;
+}
+
+export function setExperimentVariant(
+  flagKey: string,
+  variant: string,
+) {
+  trackEvent('$exposure', {
+    flag_key: flagKey,
+    variant,
+  });
 }
 
 export function triggerGuide(guideName: string) {
-  trackEvent("Guide Trigger Requested", { guide_name: guideName });
+  trackEvent('Guide Trigger Requested', {
+    guide_name: guideName,
+  });
 }
 
 export function triggerSurvey(surveyName: string) {
-  trackEvent("Survey Trigger Requested", { survey_name: surveyName });
+  trackEvent('Survey Trigger Requested', {
+    survey_name: surveyName,
+  });
 }
