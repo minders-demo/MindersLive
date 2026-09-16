@@ -37,6 +37,26 @@ jobs:
       - name: Validate TypeScript
         run: npm run lint
 
+      - name: Validate Amplitude Experiment configuration
+        env:
+          VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY: ${{ vars.VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY }}
+          VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY: ${{ vars.VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY }}
+        run: |
+          if [ -z "$VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY" ]; then
+            echo "::error::Falta la variable VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY en GitHub Actions."
+            exit 1
+          fi
+
+          if [ "$VITE_AMPLITUDE_EXPERIMENT_DEPLOYMENT_KEY" = "149c1b2572d16bf0d4035a897f1abfca" ]; then
+            echo "::error::La clave configurada es la API Key de Analytics. Debes usar el Client Deployment Key de Amplitude Experiment."
+            exit 1
+          fi
+
+          if [ "$VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY" != "exp-home-01-live-demand-cards" ]; then
+            echo "::error::VITE_AMPLITUDE_EXPERIMENT_FLAG_KEY debe ser exp-home-01-live-demand-cards."
+            exit 1
+          fi
+
       - name: Build
         run: npm run build
         env:
